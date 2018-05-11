@@ -1,3 +1,5 @@
+from __future__ import print_function
+from functools import reduce
 __author__ = 'Charlie'
 # Utils used with tensorflow implemetation
 import tensorflow as tf
@@ -34,7 +36,7 @@ def maybe_download_and_extract(dir_path, url_name, is_tarfile=False, is_zipfile=
         filepath, _ = urllib.request.urlretrieve(url_name, filepath, reporthook=_progress)
         print()
         statinfo = os.stat(filepath)
-        print('Succesfully downloaded', filename, statinfo.st_size, 'bytes.')
+        print(('Succesfully downloaded', filename, statinfo.st_size, 'bytes.'))
         if is_tarfile:
             tarfile.open(filepath, 'r:gz').extractall(dir_path)
         elif is_zipfile:

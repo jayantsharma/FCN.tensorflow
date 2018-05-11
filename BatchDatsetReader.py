@@ -1,11 +1,15 @@
 """
 Code ideas from https://github.com/Newmu/dcgan and tensorflow mnist dataset reader
 """
+from __future__ import print_function
+from builtins import str
+from builtins import range
+from builtins import object
 import numpy as np
 import scipy.misc as misc
 
 
-class BatchDatset:
+class BatchDatset(object):
     files = []
     images = []
     annotations = []
