@@ -28,7 +28,7 @@ tf.flags.DEFINE_integer("batch_size", "10",
         "Batch size for training")
 tf.flags.DEFINE_float("learning_rate", "1e-5", 
         "Learning rate for Adam Optimizer")
-tf.app.flags.DEFINE_float('num_epochs_per_decay', 5,
+tf.app.flags.DEFINE_float('num_epochs_per_decay', 1,
     'Number of epochs after which learning rate decays.')
 
 # Misc
@@ -230,11 +230,9 @@ def main(argv=None):
         image_resized = tf.image.resize_images(image_decoded, [IMAGE_SIZE, IMAGE_SIZE])
         return image_resized, llabel, rlabel
 
-    ## Train pipeline
-    # with np.load("train.npz") as data:
-    #     # train_images = data["images"]
-    #     # train_llabels = data["llabels"]
-    #     # train_rlabels = data["rlabels"]
+    with open('/mnt/grocery_data/Traderjoe/StPaul/labels.txt') as f:
+        label_map = { lbl.strip(): i for i,lbl in enumerate(f.readlines()) }
+
     with open('/mnt/grocery_data/Traderjoe/StPaul/strongly_labeled_train.txt') as f:
         lines = f.readlines()
         train_imgfiles, train_llabels, train_rlabels = [], [], []
@@ -244,7 +242,6 @@ def main(argv=None):
             llabel, rlabel = labels.split(':')
             train_llabels.append(llabel)
             train_rlabels.append(rlabel)
-    label_map = { lbl: i for i,lbl in enumerate(set(train_llabels + train_rlabels)) }
     num_cats = len(label_map)
     imgfiles = tf.constant(train_imgfiles)
     llabels = tf.constant([label_map[lbl] for lbl in train_llabels])
@@ -256,11 +253,6 @@ def main(argv=None):
     num_samples_per_epoch = len(train_imgfiles)
 
 
-    ## Test pipeline
-    # with np.load("test.npz") as data:
-    #     # test_images = data["images"]
-    #     # test_llabels = data["llabels"]
-    #     # test_rlabels = data["rlabels"]
     with open('/mnt/grocery_data/Traderjoe/StPaul/strongly_labeled_test.txt') as f:
         lines = f.readlines()
         test_imgfiles, test_llabels, test_rlabels = [], [], []
@@ -336,26 +328,32 @@ def main(argv=None):
         saver.restore(sess, ckpt.model_checkpoint_path)
         print("Model restored...", flush=True)
 
-    sess.run(test_init_op)
-    ll, lp, rl, rp = [], [], [], []
-    while True:
-        try:
-            ll_, lp_, rl_, rp_ = sess.run([llabels, lpreds, rlabels, rpreds], feed_dict={keep_probability: 1.0})
-            ll.append(ll_)
-            lp.append(lp_)
-            rl.append(rl_)
-            rp.append(rp_)
-            # lacc, racc = sess.run([laccuracy_op, raccuracy_op], feed_dict={keep_probability: 1.0})
-        except tf.errors.OutOfRangeError:
-            ll = np.concatenate(ll)
-            lp = np.concatenate(lp)
-            rl = np.concatenate(rl)
-            rp = np.concatenate(rp)
-            lacc = np.mean(ll == lp)
-            racc = np.mean(rl == rp)
-            print("Initial Accuracy: %g, %g" % (lacc, racc))
-            break
-    import sys; sys.exit()
+
+    def test(step=0):
+        sess.run(test_init_op)
+        ll, lp, rl, rp = [], [], [], []
+        while True:
+            try:
+                ll_, lp_, rl_, rp_ = sess.run([llabels, lpreds, rlabels, rpreds], feed_dict={keep_probability: 1.0})
+                ll.append(ll_)
+                lp.append(lp_)
+                rl.append(rl_)
+                rp.append(rp_)
+                # lacc, racc = sess.run([laccuracy_op, raccuracy_op], feed_dict={keep_probability: 1.0})
+            except tf.errors.OutOfRangeError:
+                ll = np.concatenate(ll)
+                lp = np.concatenate(lp)
+                rl = np.concatenate(rl)
+                rp = np.concatenate(rp)
+                lacc = np.mean(ll == lp)
+                racc = np.mean(rl == rp)
+                print("Epochs: %d, Accuracy: %g, %g" % (step, lacc, racc))
+                if step > 0:
+                    saver.save(sess, FLAGS.logs_dir + "/model.ckpt", step)
+                break
+
+    # test()
+
 
     epochs_trained = sess.run(global_step) // num_samples_per_epoch
     if FLAGS.mode == "train":
@@ -378,16 +376,9 @@ def main(argv=None):
             # run till pipeline is exhausted and print accuracy
             # can write a test_op here
             # OPTIONAL add misclassified images to pipeline
-            sess.run(test_init_op)
-            while True:
-                try:
-                    lacc, racc = sess.run([laccuracy_op, raccuracy_op], feed_dict={keep_probability: 1.0})
-                except tf.errors.OutOfRangeError:
-                    print("Epochs: %d, Accuracy: %g, %g" % (itr+1, lacc, racc))
-                    saver.save(sess, FLAGS.logs_dir + "model.ckpt", itr+1)
-                    break
-                # valid_loss = sess.run(loss, feed_dict={image: valid_images, annotation: valid_annotations,
-                #                                        keep_probability: 1.0})
+            test(itr+1)
+            # valid_loss = sess.run(loss, feed_dict={image: valid_images, annotation: valid_annotations,
+            #                                        keep_probability: 1.0})
 
     elif FLAGS.mode == "visualize":
         valid_images, valid_annotations = validation_dataset_reader.get_random_batch(FLAGS.batch_size)
