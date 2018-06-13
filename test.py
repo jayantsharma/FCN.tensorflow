@@ -7,6 +7,7 @@ import numpy as np
 from imageio import imread, imwrite
 import random
 import os, sys, shutil
+import pickle
 slim = tf.contrib.slim
 
 import TensorflowUtils as utils
@@ -25,6 +26,10 @@ tf.flags.DEFINE_string("fcn_dir", "logs_5e5/",
         "Path to FCN checkpoint")
 tf.flags.DEFINE_string("logs_dir", "logs_complete", 
         "Path to logs directory")
+tf.flags.DEFINE_string("test_dataset", "strongly_labeled_test.txt", 
+        "Path to test dataset file")
+tf.flags.DEFINE_string("store", "StPaul", 
+        "Store for which to compute features (if mode == compute_features)")
 
 # Hyperparameters
 tf.flags.DEFINE_integer("batch_size", "10", 
@@ -77,11 +82,12 @@ def main(argv):
             image_resized = tf.image.resize_images(image_decoded, [IMAGE_SIZE, IMAGE_SIZE])
             return image_resized, llabel, rlabel
 
-        with open('/mnt/grocery_data/Traderjoe/StPaul/labels.txt') as f:
+        with open('label_map.txt') as f:
             label_map = { lbl.strip(): i for i,lbl in enumerate(f.readlines()) }
         num_cats = len(label_map)
 
-        with open('/mnt/grocery_data/Traderjoe/StPaul/strongly_labeled_test.txt') as f:
+        print(FLAGS.test_dataset)
+        with open(FLAGS.test_dataset) as f:
             lines = f.readlines()
             test_imgfiles, test_llabels, test_rlabels = [], [], []
             for line in lines:
@@ -113,8 +119,10 @@ def main(argv):
 
         sess.run(tf.global_variables_initializer())
 
-        ckpt = tf.train.get_checkpoint_state(FLAGS.logs_dir)
-        saver.restore(sess, ckpt.model_checkpoint_path)
+        # ckpt = tf.train.get_checkpoint_state(FLAGS.logs_dir)
+        # print(ckpt.model_checkpoint_path)
+        print(FLAGS.logs_dir)
+        saver.restore(sess, FLAGS.logs_dir)
         print("Model restored...", flush=True)
 
         sess.run(test_init_op)
@@ -133,6 +141,55 @@ def main(argv):
                 print("Accuracy: %g" % (acc))
                 break
 
+
+    elif FLAGS.mode == 'compute_features':
+        with open('label_map.txt') as f:
+            label_map = { i: lbl.strip() for i,lbl in enumerate(f.readlines()) }
+        num_cats = len(label_map)
+
+        from glob import glob
+        store_dir = '/mnt/grocery_data/Traderjoe/{}'.format(FLAGS.store)
+        imgfiles = sorted(glob('{}/image/*.jpg'.format(store_dir)))
+
+        def _parse_function(filename):
+            image_string = tf.read_file(filename)
+            image_decoded = tf.image.decode_image(image_string)
+            image_decoded.set_shape(ORIGINAL_IMAGE_SIZE)
+            image_resized = tf.image.resize_images(image_decoded, [IMAGE_SIZE, IMAGE_SIZE])
+            return image_resized
+
+        imgfiles = tf.constant(imgfiles)
+        test_dataset = tf.data.Dataset.from_tensor_slices(imgfiles)
+        test_dataset = test_dataset.map(_parse_function)
+        test_dataset = test_dataset.batch(FLAGS.batch_size)
+
+        iterator = tf.data.Iterator.from_structure(test_dataset.output_types, test_dataset.output_shapes)
+        test_init_op = iterator.make_initializer(test_dataset)
+        images = iterator.get_next()
+
+        img_ftrs, _, _, _, _, _ = inference(images, num_cats, keep_probability, FLAGS.model_dir, FLAGS.fcn_dir, FLAGS.debug)
+
+        sess = tf.Session()
+        saver = tf.train.Saver()
+        ckpt = tf.train.get_checkpoint_state(FLAGS.logs_dir)
+        print(ckpt.model_checkpoint_path)
+        saver.restore(sess, ckpt.model_checkpoint_path)
+        print("Model restored...", flush=True)
+
+        features = []
+        sess.run(test_init_op)
+        i = 0
+        while True:
+            try:
+                if i % 10 == 0:
+                    print('step {}'.format(i))
+                ftrs = sess.run(img_ftrs, feed_dict={keep_probability: 1.0})
+                features.append(ftrs)
+                i += 1
+            except tf.errors.OutOfRangeError:
+                break
+        features = np.concatenate(features)
+        pickle.dump(features, open('{}/features.pkl'.format(store_dir), 'wb'))
 
     else:
         images = tf.placeholder(tf.float32, shape=([None] + ORIGINAL_IMAGE_SIZE), name="input_image")

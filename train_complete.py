@@ -24,7 +24,7 @@ tf.flags.DEFINE_string("fcn_dir", "logs_5e5/",
         "Path to FCN checkpoint")
 tf.flags.DEFINE_string("logs_dir", "logs_complete", 
         "Path to logs directory")
-tf.flags.DEFINE_string("initial_ckpt", "logs_classify_fast_decay/model.ckpt-16", 
+tf.flags.DEFINE_string("initial_ckpt", "logs_classify", 
         "Initial checkpoint path for model trained to classify")
 
 # Hyperparameters
@@ -32,7 +32,7 @@ tf.flags.DEFINE_integer("batch_size", "1",
         "Batch size for training")
 tf.flags.DEFINE_float("learning_rate", "1e-6", 
         "Learning rate for Adam Optimizer")
-tf.app.flags.DEFINE_float('num_epochs_per_decay', 2,
+tf.app.flags.DEFINE_float('num_epochs_per_decay', 1,
     'Number of epochs after which learning rate decays.')
 
 # Misc
@@ -83,7 +83,7 @@ def setup_data_pipeline():
         image_resized = tf.image.resize_images(image_decoded, [IMAGE_SIZE, IMAGE_SIZE])
         return tuple([marker, image_resized] + list(args))
 
-    with open('/mnt/grocery_data/Traderjoe/StPaul/labels.txt') as f:
+    with open('label_map.txt') as f:
         label_map = { lbl.strip(): i for i,lbl in enumerate(f.readlines()) }
     num_cats = len(label_map)
 
@@ -94,8 +94,9 @@ def setup_data_pipeline():
     3. insert markers - m1, m2, m3 to make sure things work
     4. if shit happens, meditate
     """
-    with open('/mnt/grocery_data/Traderjoe/StPaul/unlabeled_data.txt') as f:
+    with open('unlabeled_data.txt') as f:
         lines = f.readlines()
+        random.shuffle(lines)
         im1s, llbls1, rlbls1, im2s, llbls2, rlbls2, im3s, ws = [ [] for _ in range(8) ]
         for line in lines:
             im1, lbls1, im2, lbls2, im3, w = line.strip().split(' ')
@@ -135,11 +136,12 @@ def setup_data_pipeline():
     dataset3 = dataset3.map(_parse_function)
 
     train_dataset = tf.data.Dataset.zip((dataset1, dataset2, dataset3))
-    train_dataset = train_dataset.shuffle(buffer_size=10000)
+    train_dataset = train_dataset.repeat()
+    # train_dataset = train_dataset.shuffle(buffer_size=10000)
 
 
     # use only first image for prediction
-    with open('/mnt/grocery_data/Traderjoe/StPaul/strongly_labeled_test.txt') as f:
+    with open('strongly_labeled_test.txt') as f:
         lines = f.readlines()
         test_imgfiles, test_llabels, test_rlabels, test_weights = [], [], [], []
         for line in lines:
@@ -181,6 +183,7 @@ def _loss_function(logits, labels,
     # check broadcasting semantics
     # might need to scale this - scale being a hyperparameter
     mse_loss = tf.norm(features[1,:] - (weight * features[0,:] + (1-weight) * features[2,:])) / 1000
+    # mse_loss = tf.reduce_sum(tf.square(features[1,:] - (weight * features[0,:] + (1-weight) * features[2,:]))) / 500
     tf.summary.scalar("mse", mse_loss)
 
     loss = entropy_loss + mse_loss
@@ -231,7 +234,7 @@ def main(argv=None):
         saver.restore(sess, ckpt.model_checkpoint_path)
         print("Model restored...", flush=True)
     else:
-        saver.restore(sess, FLAGS.initial_ckpt)
+        saver.restore(sess, tf.train.latest_checkpoint(FLAGS.initial_ckpt))
         print("Initial checkpoint restored...", flush=True)
         # can reassign global step using tf.assign here
         global_step_var = [v for v in tf.global_variables() if v.name == 'global_step:0'][0]

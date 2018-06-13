@@ -4,6 +4,7 @@ import os, sys, glob
 store_dir = sys.argv[1]
 label_file = '{}/labels.txt'.format(store_dir)
 fps = 25 if store_dir.endswith('StPaul') else 30
+print(fps)
 train_data, test_data = [], []
 with open(label_file) as f:
     lines = f.readlines()

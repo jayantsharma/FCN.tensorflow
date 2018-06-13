@@ -5,6 +5,7 @@ from builtins import range
 import tensorflow as tf
 import numpy as np
 from imageio import imread, imwrite
+import random
 slim = tf.contrib.slim
 
 import TensorflowUtils as utils
@@ -201,7 +202,7 @@ def _configure_learning_rate(num_samples_per_epoch, global_step):
     return tf.train.exponential_decay(FLAGS.learning_rate,
                                       global_step,
                                       decay_steps,
-                                      .94,
+                                      .5,
                                       staircase=True,
                                       name='exponential_decay_learning_rate')
 
@@ -230,11 +231,12 @@ def main(argv=None):
         image_resized = tf.image.resize_images(image_decoded, [IMAGE_SIZE, IMAGE_SIZE])
         return image_resized, llabel, rlabel
 
-    with open('/mnt/grocery_data/Traderjoe/StPaul/labels.txt') as f:
+    with open('label_map.txt') as f:
         label_map = { lbl.strip(): i for i,lbl in enumerate(f.readlines()) }
 
-    with open('/mnt/grocery_data/Traderjoe/StPaul/strongly_labeled_train.txt') as f:
+    with open('strongly_labeled_train.txt') as f:
         lines = f.readlines()
+        random.shuffle(lines)
         train_imgfiles, train_llabels, train_rlabels = [], [], []
         for line in lines:
             imgfile, labels = line.strip().split(' ')
@@ -248,40 +250,41 @@ def main(argv=None):
     rlabels = tf.constant([label_map[lbl] for lbl in train_rlabels])
     train_dataset = tf.data.Dataset.from_tensor_slices((imgfiles, llabels, rlabels))
     train_dataset = train_dataset.map(_parse_function)
-    train_dataset = train_dataset.shuffle(buffer_size=10000)
+    train_dataset = train_dataset.repeat()
+    # train_dataset = train_dataset.shuffle(buffer_size=10000)
     train_dataset = train_dataset.batch(FLAGS.batch_size)
     num_samples_per_epoch = len(train_imgfiles)
 
 
-    with open('/mnt/grocery_data/Traderjoe/StPaul/strongly_labeled_test.txt') as f:
-        lines = f.readlines()
-        test_imgfiles, test_llabels, test_rlabels = [], [], []
-        for line in lines:
-            imgfile, labels = line.strip().split(' ')
-            test_imgfiles.append(imgfile)
-            llabel, rlabel = labels.split(':')
-            test_llabels.append(llabel)
-            test_rlabels.append(rlabel)
-    imgfiles = tf.constant(test_imgfiles)
-    llabels = tf.constant([label_map[lbl] for lbl in test_llabels])
-    rlabels = tf.constant([label_map[lbl] for lbl in test_rlabels])
-    test_dataset = tf.data.Dataset.from_tensor_slices((imgfiles, llabels, rlabels))
-    test_dataset = test_dataset.map(_parse_function)
-    test_dataset = test_dataset.batch(FLAGS.batch_size)
+    # with open('strongly_labeled_test.txt') as f:
+    #     # lines = f.readlines()
+    #     # test_imgfiles, test_llabels, test_rlabels = [], [], []
+    #     # for line in lines:
+    #     #     # imgfile, labels = line.strip().split(' ')
+    #     #     # test_imgfiles.append(imgfile)
+    #     #     # llabel, rlabel = labels.split(':')
+    #     #     # test_llabels.append(llabel)
+    #     #     # test_rlabels.append(rlabel)
+    # imgfiles = tf.constant(test_imgfiles)
+    # llabels = tf.constant([label_map[lbl] for lbl in test_llabels])
+    # rlabels = tf.constant([label_map[lbl] for lbl in test_rlabels])
+    # test_dataset = tf.data.Dataset.from_tensor_slices((imgfiles, llabels, rlabels))
+    # test_dataset = test_dataset.map(_parse_function)
+    # test_dataset = test_dataset.batch(FLAGS.batch_size)
 
     iterator = tf.data.Iterator.from_structure(train_dataset.output_types, train_dataset.output_shapes)
     batch = iterator.get_next()
 
     train_init_op = iterator.make_initializer(train_dataset)
-    test_init_op = iterator.make_initializer(test_dataset)
+    # test_init_op = iterator.make_initializer(test_dataset)
 
     images, llabels, rlabels = batch
 
     llogits, lpreds, rlogits, rpreds, restore_fn = inference(images, num_cats, keep_probability)
 
-    _, laccuracy_op = tf.metrics.accuracy(llabels, lpreds)
+    # _, laccuracy_op = tf.metrics.accuracy(llabels, lpreds)
     # tf.summary.scalar("laccuracy", laccuracy_op)
-    _, raccuracy_op = tf.metrics.accuracy(rlabels, rpreds)
+    # _, raccuracy_op = tf.metrics.accuracy(rlabels, rpreds)
     # tf.summary.scalar("raccuracy", raccuracy_op)
 
     # tf.summary.image("input_image", image, max_outputs=5)
@@ -355,43 +358,27 @@ def main(argv=None):
     # test()
 
 
-    epochs_trained = sess.run(global_step) // num_samples_per_epoch
-    if FLAGS.mode == "train":
-        for itr in range(epochs_trained, MAX_ITERATION):
-            sess.run(train_init_op)
-            feed_dict = { keep_probability: .85 }
+    # epochs_trained = sess.run(global_step) // num_samples_per_epoch
+    sess.run(train_init_op)
+    feed_dict = { keep_probability: .85 }
 
-            while True:
-                try:
-                    sess.run(train_op, feed_dict=feed_dict)
-                    gs = sess.run(global_step)
-                    if gs % 10 == 0:
-                        ltrain_loss, rtrain_loss, train_loss, summary_str = sess.run([lloss, rloss, loss, summary_op], feed_dict=feed_dict)
-                        print("Step: %d, Losses: %g, %g, %g" % (gs, ltrain_loss, rtrain_loss, train_loss), flush=True)
-                        summary_writer.add_summary(summary_str, gs)
-                except tf.errors.OutOfRangeError:
-                    break
+    for i in range(sess.run(global_step), MAX_ITERATION):
+        sess.run(train_op, feed_dict=feed_dict)
+        if i % 10 == 0:
+            # runs a distinct train_op step
+            ltrain_loss, rtrain_loss, train_loss, summary_str = sess.run([lloss, rloss, loss, summary_op], feed_dict=feed_dict)
+            print("Step: %d, Losses: %g, %g, %g" % (i, ltrain_loss, rtrain_loss, train_loss), flush=True)
+            summary_writer.add_summary(summary_str, i)
+            if i % 500 == 0:
+                saver.save(sess, FLAGS.logs_dir + "/model.ckpt", i)
 
-            # Now run test routine
-            # run till pipeline is exhausted and print accuracy
-            # can write a test_op here
-            # OPTIONAL add misclassified images to pipeline
-            test(itr+1)
-            # valid_loss = sess.run(loss, feed_dict={image: valid_images, annotation: valid_annotations,
-            #                                        keep_probability: 1.0})
-
-    elif FLAGS.mode == "visualize":
-        valid_images, valid_annotations = validation_dataset_reader.get_random_batch(FLAGS.batch_size)
-        pred = sess.run(pred_annotation, feed_dict={image: valid_images, annotation: valid_annotations,
-                                                    keep_probability: 1.0})
-        valid_annotations = np.squeeze(valid_annotations, axis=3)
-        pred = np.squeeze(pred, axis=3)
-
-        for itr in range(FLAGS.batch_size):
-            utils.save_image(valid_images[itr].astype(np.uint8), FLAGS.logs_dir, name="inp_" + str(5+itr))
-            utils.save_image(valid_annotations[itr].astype(np.uint8), FLAGS.logs_dir, name="gt_" + str(5+itr))
-            utils.save_image(pred[itr].astype(np.uint8), FLAGS.logs_dir, name="pred_" + str(5+itr))
-            print("Saved image: %d" % itr, flush=True)
+        # Now run test routine
+        # run till pipeline is exhausted and print accuracy
+        # can write a test_op here
+        # OPTIONAL add misclassified images to pipeline
+        # test(itr+1)
+        # valid_loss = sess.run(loss, feed_dict={image: valid_images, annotation: valid_annotations,
+        #                                        keep_probability: 1.0})
 
 
 if __name__ == "__main__":
